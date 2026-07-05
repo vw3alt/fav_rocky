@@ -1,0 +1,12 @@
+fastapi
+uvicorn[standard]
+pydantic
+langchain-ollama
+langchain-chroma
+langchain-huggingface
+langchain-core
+faster-whisper
+pydub
+piper-tts
+python-multipart
+sentence-transformers

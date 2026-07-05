@@ -1,0 +1,4 @@
+venv
+server/venv
+server/voices
+electron/node_modules

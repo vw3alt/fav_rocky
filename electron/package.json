@@ -1,0 +1,25 @@
+{
+  "name": "rocky-desktop-buddy",
+  "version": "0.1.0",
+  "description": "A Rocky (Project Hail Mary) desktop companion",
+  "main": "main.js",
+  "scripts": {
+    "start": "electron .",
+    "build:mac": "electron-builder --mac zip"
+  },
+  "devDependencies": {
+    "electron": "^31.0.0",
+    "electron-builder": "^24.13.3"
+  },
+  "build": {
+    "appId": "com.yourname.rockybuddy",
+    "productName": "Rocky",
+    "files": [
+      "**/*"
+    ],
+    "mac": {
+      "target": ["zip"],
+      "icon": "sprites/idle.png"
+    }
+  }
+}

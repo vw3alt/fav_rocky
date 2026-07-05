@@ -1,0 +1,49 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8">
+  <style>
+    html, body {
+      margin: 0;
+      padding: 0;
+      background: transparent;
+      overflow: hidden; 
+      -webkit-app-region: drag;
+      user-select: none;
+      width: 120vw; 
+      height: 100vh;
+    }
+
+    #rocky {
+      width: 212px;
+      height: 176px;
+      object-fit: contain; 
+      image-rendering: pixelated;
+      display: block;
+      -webkit-app-region: drag;
+    }
+    #rocky.clickable {
+      -webkit-app-region: no-drag;
+      cursor: pointer;
+    }
+    #status-dot {
+      position: absolute;
+      top: 10px;
+      right: 10px;
+      width: 10px;
+      height: 10px;
+      border-radius: 50%;
+      background: #555;
+      -webkit-app-region: no-drag;
+    }
+    #status-dot.listening { background: #e74c3c; }
+    #status-dot.thinking { background: #f1c40f; }
+    #status-dot.talking { background: #2ecc71; }
+  </style>
+</head>
+<body>
+  <img id="rocky" src="sprites/idle.png" class="clickable" />
+  <div id="status-dot"></div>
+  <script src="renderer.js"></script>
+</body>
+</html>
