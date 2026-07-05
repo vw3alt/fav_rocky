@@ -15,8 +15,6 @@ mkdir -p "$LOG_DIR"
 
 echo "== Starting Rocky =="
 
-# 1. Make sure Ollama is running. brew services keeps it running persistently
-#    after setup, but start it defensively in case it isn't for some reason.
 if ! pgrep -x "ollama" > /dev/null 2>&1; then
     echo "Starting Ollama..."
     (brew services start ollama > "$LOG_DIR/ollama.log" 2>&1) || \
@@ -24,7 +22,6 @@ if ! pgrep -x "ollama" > /dev/null 2>&1; then
     sleep 2
 fi
 
-# 2. Start the Python brain server in the background.
 if [ ! -d "$SERVER_DIR/venv" ]; then
     echo ""
     echo "It looks like setup hasn't been run yet."
@@ -39,9 +36,6 @@ python server.py > "$LOG_DIR/server.log" 2>&1 &
 SERVER_PID=$!
 echo "Brain server booting (PID $SERVER_PID, logs at $LOG_DIR/server.log)..."
 
-# Open a separate Terminal window that just tails the server's log output,
-# purely for live debugging. This window has no connection to the actual
-# server process, so closing it does NOT stop Rocky.
 osascript -e "tell application \"Terminal\" to do script \"echo 'Rocky server log (closing this window is safe, Rocky keeps running)'; tail -f '$LOG_DIR/server.log'\"" > /dev/null
 
 cleanup() {
@@ -51,7 +45,6 @@ cleanup() {
 }
 trap cleanup EXIT
 
-# 3. Wait for the server to report healthy before opening the widget.
 echo -n "Waking Rocky up"
 READY=""
 for i in $(seq 1 90); do
@@ -73,9 +66,6 @@ fi
 echo "Rocky is awake! Opening the desktop widget..."
 echo "(Quit Rocky any time from the menu bar icon near the clock.)"
 
-# 4. Launch the desktop pet. This blocks until Rocky is quit (via the tray
-#    icon), at which point cleanup() above runs automatically and stops
-#    the brain server too.
 cd "$ELECTRON_DIR"
 npm start
 

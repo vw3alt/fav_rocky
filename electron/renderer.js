@@ -18,6 +18,7 @@ const SPRITE_MAP = {
   talking_sad: 'sprites/sad_bg.png',
   talking_worried: 'sprites/sad_bg.png',
   talking_angry: 'sprites/sad_bg.png',
+  talking_ball: 'sprites/ball_bg.png',
   talking_idle: 'sprites/rest_bg.png',
 };
 
@@ -73,8 +74,20 @@ function cancelListening() {
   }
 }
 
-const VISION_TRIGGER_RE = /\b(see|look|watch|screen|wearing|appearance|camera|picture|color|computer)\b/i;
+// Split by intent instead of one shared trigger list:
+// - screen-only words only grab a screenshot
+// - camera-only words only grab a webcam frame
+// - ambiguous words (could mean either) grab both
+const SCREEN_ONLY_TRIGGER_RE = /\b(screen|computer|monitor|desktop|browser|website|webpage|page)\b/i;
+const CAMERA_ONLY_TRIGGER_RE = /\b(camera|wearing|appearance|shirt|pants|outfit|clothes|clothing|hat|necklace|ring|jewlery|glasses|holding)\b/i;
+const BOTH_TRIGGER_RE = /\b(see|look|watch|picture|pictures|color|colors|colour)\b/i;
 
+function needsScreen(text) {
+  return SCREEN_ONLY_TRIGGER_RE.test(text) || BOTH_TRIGGER_RE.test(text);
+}
+function needsCamera(text) {
+  return CAMERA_ONLY_TRIGGER_RE.test(text) || BOTH_TRIGGER_RE.test(text);
+}
 let thinkingAudioBlob = null;
 
 async function preloadThinkingSound() {
@@ -214,14 +227,32 @@ async function handleRecordingStopped() {
     let screenImageB64 = null;
     let webcamImageB64 = null;
 
-    if (VISION_TRIGGER_RE.test(heardText)) {
+    const wantsScreen = needsScreen(heardText);
+    const wantsCamera = needsCamera(heardText);
+
+    if (wantsScreen || wantsCamera) {
       announceThinking();
       setSprite('thinking');
       setStatus('thinking');
-      try { screenImageB64 = await window.rockyVision.captureScreen(); }
-      catch (e) { console.error('screen capture failed', e); }
-      try { webcamImageB64 = await captureWebcamFrame(); }
-      catch (e) { console.error('webcam capture failed', e); }
+
+      // Run both captures concurrently instead of one after another -
+      // shaves the capture step down when both triggers fire together.
+      const captureTasks = [];
+      if (wantsScreen) {
+        captureTasks.push(
+          window.rockyVision.captureScreen()
+            .then((b64) => { screenImageB64 = b64; })
+            .catch((e) => console.error('screen capture failed', e))
+        );
+      }
+      if (wantsCamera) {
+        captureTasks.push(
+          captureWebcamFrame()
+            .then((b64) => { webcamImageB64 = b64; })
+            .catch((e) => console.error('webcam capture failed', e))
+        );
+      }
+      await Promise.all(captureTasks);
     }
 
     // 2. Text -> Rocky's reply + mood

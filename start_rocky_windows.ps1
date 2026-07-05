@@ -25,19 +25,23 @@ if (-not (Get-Process ollama -ErrorAction SilentlyContinue)) {
 }
 
 # 2. Start the Python brain server in the background.
-$venvActivate = Join-Path $ServerDir "venv\Scripts\Activate.ps1"
-if (-not (Test-Path $venvActivate)) {
+#    IMPORTANT: launch venv's python.exe DIRECTLY (not wrapped in a nested
+#    powershell -NoExit) so $serverProcess.Id is python's actual PID. The
+#    previous version wrapped it in a child shell, meaning Stop-Process at
+#    the end only killed the wrapper - python server.py kept running as an
+#    orphan, which is why conversation history never actually reset between
+#    "sessions."
+$pythonExe = Join-Path $ServerDir "venv\Scripts\python.exe"
+if (-not (Test-Path $pythonExe)) {
     "Setup hasn't been run yet. Run setup_windows.ps1 from the server folder first." | Out-File "$LogDir\server_err.log" -Append
     exit 1
 }
 
-Push-Location $ServerDir
-$serverProcess = Start-Process -FilePath "powershell" `
-    -ArgumentList "-NoExit", "-Command", "& { . '$venvActivate'; python server.py }" `
+$serverProcess = Start-Process -FilePath $pythonExe -ArgumentList "server.py" `
+    -WorkingDirectory $ServerDir `
     -RedirectStandardOutput "$LogDir\server.log" `
     -RedirectStandardError "$LogDir\server_err.log" `
     -WindowStyle Hidden -PassThru
-Pop-Location
 Write-Host "Brain server booting (PID $($serverProcess.Id), logs at $LogDir)..."
 
 # Open a separate window that just tails the server's log output, purely
@@ -46,36 +50,40 @@ Write-Host "Brain server booting (PID $($serverProcess.Id), logs at $LogDir)..."
 $serverLogPath = "$LogDir\server.log"
 Start-Process powershell -ArgumentList "-NoExit", "-Command", "Write-Host 'Rocky server log (closing this window is safe, Rocky keeps running)' -ForegroundColor Cyan; Get-Content -Path `"$serverLogPath`" -Wait"
 
-# 3. Wait for the server to report healthy.
-Write-Host -NoNewline "Waking Rocky up"
-$ready = $false
-for ($i = 0; $i -lt 90; $i++) {
-    try {
-        Invoke-WebRequest -Uri "http://127.0.0.1:8000/health" -UseBasicParsing -TimeoutSec 1 | Out-Null
-        $ready = $true
-        break
-    } catch {
-        Write-Host -NoNewline "."
-        Start-Sleep -Seconds 1
+try {
+    # 3. Wait for the server to report healthy.
+    Write-Host -NoNewline "Waking Rocky up"
+    $ready = $false
+    for ($i = 0; $i -lt 90; $i++) {
+        try {
+            Invoke-WebRequest -Uri "http://127.0.0.1:8000/health" -UseBasicParsing -TimeoutSec 1 | Out-Null
+            $ready = $true
+            break
+        } catch {
+            Write-Host -NoNewline "."
+            Start-Sleep -Seconds 1
+        }
     }
-}
-Write-Host ""
+    Write-Host ""
 
-if (-not $ready) {
-    "Brain server did not start in time." | Out-File "$LogDir\server_err.log" -Append
+    if (-not $ready) {
+        "Brain server did not start in time." | Out-File "$LogDir\server_err.log" -Append
+        exit 1
+    }
+
+    Write-Host "Rocky is awake! Opening the desktop widget..." -ForegroundColor Green
+    Write-Host "(Close Rocky from the taskbar, same as any other app, when you're done.)"
+
+    # 4. Launch the desktop widget. This blocks until Rocky is quit.
+    Push-Location $ElectronDir
+    npm start
+    Pop-Location
+}
+finally {
+    # try/finally (instead of code just placed after npm start) guarantees
+    # this runs even if npm start throws, or the script is interrupted -
+    # this is the second half of the orphan-process fix.
+    Write-Host "Shutting down Rocky's brain server..."
     Stop-Process -Id $serverProcess.Id -Force -ErrorAction SilentlyContinue
-    exit 1
+    Write-Host "Rocky has closed."
 }
-
-Write-Host "Rocky is awake! Opening the desktop widget..." -ForegroundColor Green
-Write-Host "(Close Rocky from the taskbar, same as any other app, when you're done.)"
-
-# 4. Launch the desktop widget. This blocks until Rocky is quit.
-Push-Location $ElectronDir
-npm start
-Pop-Location
-
-# 5. Clean up the brain server once the widget closes.
-Write-Host "Shutting down Rocky's brain server..."
-Stop-Process -Id $serverProcess.Id -Force -ErrorAction SilentlyContinue
-Write-Host "Rocky has closed."

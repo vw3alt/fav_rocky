@@ -1,11 +1,12 @@
 {
   "name": "rocky-desktop-buddy",
   "version": "0.1.0",
-  "description": "A Rocky (Project Hail Mary) desktop companion",
+  "description": "A Rocky (Project Hail Mary) desktop companion for Fav <3",
   "main": "main.js",
   "scripts": {
     "start": "electron .",
-    "build:mac": "electron-builder --mac zip"
+    "build:mac": "electron-builder --mac zip",
+    "build:win": "electron-builder --win zip"
   },
   "devDependencies": {
     "electron": "^31.0.0",
@@ -20,6 +21,10 @@
     "mac": {
       "target": ["zip"],
       "icon": "sprites/rest_bg.png"
+    },
+    "win": {
+      "target": ["zip"],
+      "icon": "../rocky.ico"
     }
   }
 }

@@ -9,25 +9,18 @@ $ElectronDir = Join-Path $ProjectDir "electron"
 
 Write-Host "== Rocky Brain Server setup (Windows) ==" -ForegroundColor Cyan
 
-# 1. Check for Ollama
 if (-not (Get-Command ollama -ErrorAction SilentlyContinue)) {
     Write-Host "Ollama not found. Download and install it from https://ollama.com/download/windows"
     Write-Host "Then re-run this script."
     exit 1
 }
 
-# Pull every model server.py can use. gemma2:2b is the default fast chat
-# model, phi3:mini is used automatically when a vision request comes in,
-# and moondream powers the screen/webcam "vision" feature. llama3.1:8b is
-# kept as an optional heavier backup model (edit LLM_MODEL in server.py to
-# switch to it) -- it's a multi-GB download, so this step can take a while.
 Write-Host "Pulling models (this is several GB total, be patient)..."
 ollama pull gemma2:2b
 ollama pull phi3:mini
 ollama pull moondream
 ollama pull llama3.1:8b-instruct-q4_K_M
 
-# 2. Check for ffmpeg (needed by pydub)
 if (-not (Get-Command ffmpeg -ErrorAction SilentlyContinue)) {
     Write-Host ""
     Write-Host "ffmpeg not found on PATH." -ForegroundColor Yellow
@@ -39,7 +32,6 @@ if (-not (Get-Command ffmpeg -ErrorAction SilentlyContinue)) {
     exit 1
 }
 
-# 3. Python venv + deps
 Write-Host "Setting up Python virtual environment..."
 Push-Location $ServerDir
 python -m venv venv
@@ -47,9 +39,6 @@ python -m venv venv
 python -m pip install --upgrade pip
 pip install -r requirements.txt
 
-# 4. Piper voice models -- both voices, since server.py defaults to
-# en_US-joe-medium but en_US-ryan-high is kept available as an alternative
-# (set PIPER_VOICE_MODEL in server.py, or as an env var, to switch).
 New-Item -ItemType Directory -Force -Path voices | Out-Null
 
 $joePath = "voices\en_US-joe-medium.onnx"
@@ -67,7 +56,6 @@ if (-not (Test-Path $ryanPath)) {
 }
 Pop-Location
 
-# 5. Electron desktop widget dependencies
 if (-not (Test-Path (Join-Path $ElectronDir "node_modules"))) {
     Write-Host "Installing desktop widget dependencies..."
     Push-Location $ElectronDir
@@ -75,27 +63,11 @@ if (-not (Test-Path (Join-Path $ElectronDir "node_modules"))) {
     Pop-Location
 }
 
-# 6. Generate a proper .ico from Rocky's sprite, and create a desktop
-# shortcut to "Start Rocky.vbs" using it. .vbs files can't carry a custom
-# icon themselves, but a shortcut to one can -- this is what lets a
-# double-clickable "Start Rocky" launcher show Rocky's own picture instead
-# of a generic script icon.
 Write-Host "Creating a desktop shortcut with Rocky's icon..."
-$spritePath = Join-Path $ElectronDir "sprites\rest_bg.png"
-$icoPath = Join-Path $ProjectDir "rocky.ico"
+$icoPath = Join-Path $ElectronDir "rocky.ico"
 
-if (Test-Path $spritePath) {
-    Add-Type -AssemblyName System.Drawing
-    $bitmap = [System.Drawing.Bitmap]::FromFile($spritePath)
-    $hIcon = $bitmap.GetHicon()
-    $icon = [System.Drawing.Icon]::FromHandle($hIcon)
-    $stream = [System.IO.File]::Create($icoPath)
-    $icon.Save($stream)
-    $stream.Close()
-    $icon.Dispose()
-    $bitmap.Dispose()
-} else {
-    Write-Host "Couldn't find $spritePath -- skipping icon generation, shortcut will use a default icon." -ForegroundColor Yellow
+if (-not (Test-Path $icoPath)) {
+    Write-Host "Couldn't find $icoPath -- shortcut will use a default icon." -ForegroundColor Yellow
 }
 
 $shell = New-Object -ComObject WScript.Shell
