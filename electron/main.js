@@ -1,4 +1,4 @@
-const { app, BrowserWindow, screen } = require('electron');
+const { app, BrowserWindow, screen, desktopCapturer, ipcMain } = require('electron');
 const path = require('path');
 
 let win;
@@ -30,9 +30,20 @@ function createWindow() {
   win.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true });
   win.loadFile('index.html');
 
-  // Uncomment while developing to see console logs / errors:
   // win.webContents.openDevTools({ mode: 'detach' });
 }
+
+ipcMain.handle('capture-screen', async () => {
+  const sources = await desktopCapturer.getSources({
+    types: ['screen'],
+    thumbnailSize: { width: 1280, height: 720 },
+  });
+  return sources[0].thumbnail.toPNG().toString('base64');
+});
+
+ipcMain.on('set-ignore-mouse-events', (event, ignore) => {
+  win.setIgnoreMouseEvents(ignore, { forward: true });
+});
 
 app.whenReady().then(createWindow);
 

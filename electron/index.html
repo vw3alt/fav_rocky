@@ -8,22 +8,34 @@
       padding: 0;
       background: transparent;
       overflow: hidden; 
-      -webkit-app-region: drag;
       user-select: none;
       width: 120vw; 
       height: 100vh;
     }
-
     #rocky {
       width: 212px;
       height: 176px;
       object-fit: contain; 
       image-rendering: pixelated;
       display: block;
+      cursor: pointer;
+    }
+    #drag-handle {
+      position: absolute;
+      top: 28px;
+      right: 8px;
+      width: 14px;
+      height: 14px;
+      line-height: 14px;
+      text-align: center;
+      font-size: 15px;
+      color: #757575;
+      background: rgba(0, 0, 0, 0.35);
+      border-radius: 4px;
+      cursor: move;
       -webkit-app-region: drag;
     }
     #rocky.clickable {
-      -webkit-app-region: no-drag;
       cursor: pointer;
     }
     #status-dot {
@@ -34,7 +46,6 @@
       height: 10px;
       border-radius: 50%;
       background: #555;
-      -webkit-app-region: no-drag;
     }
     #status-dot.listening { background: #e74c3c; }
     #status-dot.thinking { background: #f1c40f; }
@@ -42,8 +53,9 @@
   </style>
 </head>
 <body>
-  <img id="rocky" src="sprites/idle.png" class="clickable" />
+  <img id="rocky" src="sprites/rest_bg.png" />
   <div id="status-dot"></div>
+  <div id="drag-handle" title="Drag to move Rocky">✥</div>
   <script src="renderer.js"></script>
 </body>
 </html>
