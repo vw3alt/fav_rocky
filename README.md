@@ -9,11 +9,14 @@ internet dependency once set up (aside from the one-time downloads below).
 
 ```
 rocky-project/
-├── server/          <- Python "brain": LLM + memory + STT + TTS
+├── Rocky.app         <- Double-click this to start Rocky (after one-time setup)
+├── .gitignore        <- For git
+├── start_rocky.sh    <- What Rocky.app runs under the hood
+├── server/           <- Python "brain": LLM + memory + STT + TTS
 │   ├── server.py
 │   ├── requirements.txt
 │   └── setup_mac.sh
-└── electron/        <- Desktop pet UI
+└── electron/         <- Desktop pet UI
     ├── main.js
     ├── preload.js
     ├── index.html
@@ -23,9 +26,10 @@ rocky-project/
 ```
 
 ## What's already working here
-- `/chat` — sends her message through the Rocky personality prompt, retrieves
-  relevant memories from a local vector DB, returns a reply **and a mood tag**
-  (happy/excited/curious/sad/worried/angry/idle) so the sprite can react.
+- `/chat` — sends her message through the Rocky personality prompt, includes
+  any remembered facts about her as context, returns a reply **and a mood
+  tag** (happy/excited/curious/sad/worried/angry/idle) so the sprite can
+  react.
 - `/listen` — turns a recorded voice clip into text using faster-whisper
   (fully offline).
 - `/speak` — turns Rocky's reply into speech using Piper TTS, then applies a
@@ -48,36 +52,40 @@ rocky-project/
 
 ## Setup on her Mac
 
-### 1. Brain server
+### One-time setup
 ```bash
 cd server
 chmod +x setup_mac.sh
 ./setup_mac.sh
 ```
-This installs Homebrew (if missing), Ollama, ffmpeg, sets up a Python venv,
-installs dependencies, pulls the quantized Llama 3.1 8B model, and downloads
-a Piper voice model.
+This installs Homebrew (if missing), Ollama, ffmpeg, and Node.js; pulls all
+the local models `server.py` uses (`gemma2:2b`, `phi3:mini`, `moondream`,
+plus `llama3.1:8b-instruct-q4_K_M` as an optional heavier backup); sets up
+the Python virtual environment and dependencies; downloads both Piper voice
+models (`en_US-joe-medium`, the default, and `en_US-ryan-high` as an
+alternative); installs the Electron app's dependencies; and copies
+**Rocky.app** to the Desktop.
 
-Then start it:
+This step downloads several GB of models, so it can take a while — that's
+normal.
+
+### Every time after that
+Just double-click **Rocky.app** on the Desktop. A Terminal window will open
+showing status while Rocky wakes up (Ollama → brain server → the desktop
+widget) — that's expected, just leave it be. Once Rocky appears, click him
+to start recording, click again to stop and send.
+
+To quit Rocky, use the tray icon near the clock in the menu bar and choose
+"Quit Rocky." This also shuts down the brain server running behind him, so
+you won't end up with an orphaned process eating RAM.
+
+If you ever want to run things manually instead (e.g. to see the Python
+server's logs directly), you can still do:
 ```bash
-source venv/bin/activate
-python server.py
+cd server && source venv/bin/activate && python server.py
+# in another terminal:
+cd electron && npm start
 ```
-Leave this running in a terminal (or turn it into a background service later
-via `launchd` once you're happy with it).
-
-Check it's alive: open `http://localhost:8000/health` in a browser — you
-should see `{"status": "ok", ...}`.
-
-### 2. Desktop app
-Requires Node.js (install via `brew install node` if not already present).
-```bash
-cd electron
-npm install
-npm start
-```
-Rocky should appear as a floating sprite in the bottom-right corner of her
-screen. Click him to start recording, click again to stop and send.
 
 ---
 
@@ -111,9 +119,9 @@ for a personal project like this.
 - **Voice character**: `alienify()` in `server.py` currently just pitch-shifts
   and normalizes. If you want more of a "made of rock" texture, look into
   adding light ring modulation or bitcrushing — happy to add that next.
-- **Memory**: everything gets stored in `server/rocky_memory/` (a local
-  Chroma DB). Delete that folder any time to wipe Rocky's memory and start
-  fresh. Use `/remember` to seed specific facts ahead of time.
+- **Memory**: facts get stored in `server/rocky_facts.json`, a plain list of
+  short sentences. Delete that file any time to wipe Rocky's memory and
+  start fresh. Use `/remember` to seed specific facts ahead of time.
 - **Mood tags**: the LLM is instructed to prefix every reply with
   `[mood]`. If you swap models and moods stop showing up reliably, check the
   raw output from `/chat` in the terminal logs — some smaller models need a

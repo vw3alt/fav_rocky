@@ -1,0 +1,16 @@
+#!/bin/bash
+# This is the executable inside Rocky.app. Double-clicking Rocky.app in
+# Finder runs this, which opens a Terminal window running start_rocky.sh
+# so you can see status/progress (and any errors) the first few times.
+
+# Rocky.app is expected to sit at the root of the rocky-project folder,
+# right next to start_rocky.sh, server/, and electron/.
+APP_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+PROJECT_DIR="$(dirname "$APP_DIR")"
+
+osascript <<EOF
+tell application "Terminal"
+    activate
+    do script "cd '$PROJECT_DIR' && ./start_rocky.sh; exit"
+end tell
+EOF

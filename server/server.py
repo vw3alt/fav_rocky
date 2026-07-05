@@ -7,6 +7,7 @@ from pathlib import Path
 from threading import Lock
 import wave
 import json
+import emoji
 
 import httpx
 from fastapi import FastAPI, HTTPException, UploadFile, File
@@ -114,7 +115,7 @@ llm = OllamaLLM(
 llm_heavy = OllamaLLM(
     model=LLM_MODEL_HEAVY,
     temperature=0.7,
-    num_predict=100,
+    num_predict=80,
     keep_alive="30m",
     repeat_penalty=1.3,
     repeat_last_n=64,
@@ -129,6 +130,7 @@ speaking to your favorite human friend (the user).
 
 Rules for your behavior:
 1. SPEECH STYLE: You are highly intelligent but speak in slightly disjointed, literal, and highly enthusiastic English.
+   - Always say "Rocky" instead of "I" or "my".
    - Never use contractions (use "am not" instead of "don't", "it is" instead of "it's").
    - If the user tells you their name, use their name instead of "you".
    - If the user asks you a question, always answer it.
@@ -210,11 +212,9 @@ def parse_mood_and_text(raw: str):
 
 
 def sanitize_reply(text: str) -> str:
-    # cut at the first paragraph break — Rocky's lines are one short paragraph
+    text = emoji.replace_emoji(text, replace="")
     text = text.split("\n\n")[0]
-    # strip markdown bold/italics artifacts
     text = text.replace("**", "").replace("*", "")
-    # drop anything that looks like leaked instructions
     leak_markers = ["important:", "remember to", "follow the", "specified rules", "stay consistent"]
     lines = [ln for ln in text.split("\n") if not any(m in ln.lower() for m in leak_markers)]
     return " ".join(lines).strip()
@@ -397,7 +397,7 @@ def alienify(
     input_wav: Path,
     output_wav: Path,
     pitch_semitones: float = 0.2,
-    speed_factor: float = 1.32,
+    speed_factor: float = 1.24,
     reverb_amount: float = 0,
     alien_strength: float = 0,
 ):

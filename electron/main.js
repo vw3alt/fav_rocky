@@ -18,7 +18,7 @@ function createWindow() {
     alwaysOnTop: true,
     resizable: false,
     hasShadow: false,
-    skipTaskbar: true,
+    icon: path.join(__dirname, 'sprites', 'rest_bg.png'),
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
       contextIsolation: true,
@@ -45,10 +45,20 @@ ipcMain.on('set-ignore-mouse-events', (event, ignore) => {
   win.setIgnoreMouseEvents(ignore, { forward: true });
 });
 
-app.whenReady().then(createWindow);
+app.whenReady().then(() => {
+  if (process.platform === 'darwin' && app.dock) {
+    app.dock.setIcon(path.join(__dirname, 'sprites', 'rest_bg.png'));
+  }
+  createWindow();
+});
 
 app.on('window-all-closed', () => {
-  if (process.platform !== 'darwin') app.quit();
+  // Rocky is a single-purpose widget, not a normal multi-window Mac app —
+  // always quit fully when the window closes (rather than staying alive
+  // in the dock, which is the usual Mac convention). This matters so the
+  // launcher script can detect Rocky has exited and clean up the brain
+  // server process behind it.
+  app.quit();
 });
 
 app.on('activate', () => {

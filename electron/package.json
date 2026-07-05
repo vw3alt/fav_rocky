@@ -19,7 +19,7 @@
     ],
     "mac": {
       "target": ["zip"],
-      "icon": "sprites/idle.png"
+      "icon": "sprites/rest_bg.png"
     }
   }
 }
