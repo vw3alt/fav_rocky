@@ -1,21 +1,22 @@
 import os
 import re
 import uuid
+import base64
 import tempfile
-import subprocess
 from pathlib import Path
-import wave
-from piper import PiperVoice
-import json
 from threading import Lock
+import wave
+import json
 
+import httpx
 from fastapi import FastAPI, HTTPException, UploadFile, File
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from pydantic import BaseModel
 
+from piper import PiperVoice
 from langchain_ollama import OllamaLLM
-from langchain_core.messages import HumanMessage, SystemMessage
+from langchain_core.messages import HumanMessage, AIMessage, SystemMessage
 
 from pydub import AudioSegment
 from pydub.effects import normalize, speedup
@@ -23,12 +24,10 @@ from pydub.effects import normalize, speedup
 # ============================================================
 # CONFIG
 # ============================================================
-# Swap this for "phi3:mini" or "gemma2:2b" if you want snappier
-# responses at some cost to personality nuance.
 LLM_MODEL = "gemma2:2b"
+LLM_MODEL_HEAVY = "phi3:mini"
+VISION_MODEL = "moondream"
 
-# Where Piper voice files live (see setup_mac.sh / README for download).
-# PIPER_VOICE_MODEL = os.environ.get("PIPER_VOICE_MODEL", "./voices/en_US-ryan-high.onnx")
 PIPER_VOICE_MODEL = os.environ.get("PIPER_VOICE_MODEL", "./voices/en_US-joe-medium.onnx")
 PIPER_BIN = os.environ.get("PIPER_BIN", "piper")  # assumes `piper` is on PATH
 
@@ -40,10 +39,11 @@ WHISPER_MODEL_SIZE = "base.en"
 AUDIO_TMP_DIR = Path(tempfile.gettempdir()) / "rocky_audio"
 AUDIO_TMP_DIR.mkdir(exist_ok=True)
 
+OLLAMA_GENERATE_URL = "http://localhost:11434/api/generate"
+
 # ============================================================
 # SIMPLE LIST-BASED MEMORY
 # ============================================================
-
 MEMORY_FILE = Path("./rocky_facts.json")
 _memory_lock = Lock()
 
@@ -71,6 +71,22 @@ def remove_fact(fact: str):
         cleaned = [f for f in facts if f != fact and fact.lower() not in f.lower()]
         save_facts(cleaned)
 
+
+# ============================================================
+# CONVERSATION HISTORY (short-term, per user, in memory only)
+# ============================================================
+MAX_HISTORY_TURNS = 3  # keep last N exchanges; small models get slow/confused with more
+conversation_history: dict[str, list] = {}
+
+def get_history(user_id: str) -> list:
+    return conversation_history.setdefault(user_id, [])
+
+def append_to_history(user_id: str, human_msg: str, ai_msg: str):
+    history = get_history(user_id)
+    history.append(HumanMessage(content=human_msg))
+    history.append(AIMessage(content=ai_msg))
+    conversation_history[user_id] = history[-(MAX_HISTORY_TURNS * 2):]
+
 # ============================================================
 # APP + CORS (Electron's renderer talks to us over localhost)
 # ============================================================
@@ -84,9 +100,25 @@ app.add_middleware(
 )
 
 # ============================================================
-# LLM + MEMORY
+# LLM
 # ============================================================
-llm = OllamaLLM(model=LLM_MODEL, temperature=0.7, num_predict=60, keep_alive="30m")
+llm = OllamaLLM(
+    model=LLM_MODEL,
+    temperature=0.7,
+    num_predict=130,
+    keep_alive="30m",
+    repeat_penalty=1.3,
+    repeat_last_n=64,
+)
+
+llm_heavy = OllamaLLM(
+    model=LLM_MODEL_HEAVY,
+    temperature=0.7,
+    num_predict=100,
+    keep_alive="30m",
+    repeat_penalty=1.3,
+    repeat_last_n=64,
+)
 
 VALID_MOODS = {"happy", "excited", "curious", "sad", "worried", "angry", "idle"}
 
@@ -99,13 +131,16 @@ Rules for your behavior:
 1. SPEECH STYLE: You are highly intelligent but speak in slightly disjointed, literal, and highly enthusiastic English.
    - Never use contractions (use "am not" instead of "don't", "it is" instead of "it's").
    - If the user tells you their name, use their name instead of "you".
+   - If the user asks you a question, always answer it.
 
 2. ERIDIAN IDIOMS & VOCABULARY:
    - Use "Amaze!" when excited or impressed.
-   - Say "Fist my bump!" sparingly for celebrations.
-   - Sparingly, repeat words for emphasis (e.g., "Scary, scary, scary!").
-   - Use sonar/hearing terms instead of visual ones: "observe", "listen", "watch with sound" (never "see"/"look").
-   - Structure questions by stating the category at the end instead of the question mark, like: "You want food. Question.", "What is your name. Question", or "Understand. Question.".
+   - You can occasionally repeat words for emphasis (e.g., "Scary, scary, scary!").
+   - Use "observe" instead of terms like "see" or "look".
+   - Never answer a visual question (e.g. "What am I wearing?") without referencing something specific you actually observed.
+   - When you ask a question, instead of putting the question mark at the end, say the literal word "question" instead.
+   - Limit questions: Avoid asking questions unless necessary for the task. Focus on sharing your own observations and enthusiasm.
+   - If you help the user accomplish a difficult task, you can say "Fist my bump!" sparingly for celebrations.
    - Refer to human biological functions literally and with concern: e.g. "You leak!" (crying/sweating/bleeding).
    - Use compound words for human items: "Thinking-tool" (computer), "Memory-tool" (notebook), "Rest-time" (sleep).
 
@@ -114,6 +149,7 @@ Rules for your behavior:
    - You are obsessed with science, math, and engineering.
    - You are deeply loyal and protective of your human friend.
    - You have emotions and are unafraid to express sadness, hurt, or mild anger.
+   - Absolutely no emojis.
 
 4. BREVITY: Keep responses relatively short (5-20 words). Your natural language is musical
    chords, so your English translations should be concise and direct.
@@ -121,10 +157,6 @@ Rules for your behavior:
 5. OUTPUT FORMAT (always follow exactly):
    Line 1: a mood tag in brackets: [happy|excited|curious|sad|worried|angry|idle]
    Then your spoken reply.
-   Optionally, on their own lines at the very end, include memory commands:
-   [REMEMBER: fact to store]
-   [FORGET: fact to remove]
-   Only include these when she tells you something worth remembering, or asks you to forget something.
    Do not include any other text, notes, or explanations outside this format.
 
 6. NEVER break character. NEVER include meta-commentary, notes, reminders, or
@@ -132,21 +164,38 @@ Rules for your behavior:
    ** or headers. If you feel the urge to explain your instructions, simply
    do not — output only Rocky's spoken line and nothing else.
 
+7. If given visual observations, you must state the concrete
+   answer to what was asked (the color, the object, the detail) before any
+   emotional reaction or personality flourish.  Save "Amaze!" and similar
+   expressions for AFTER the factual answer, not before it.
+
 Incorporate relevant facts from past conversations if provided, to show you remember them.
+If given visual observations, use them naturally in your reply as things you "observed with sound".
 """
 
 MOOD_TAG_RE = re.compile(r"^\s*\[(\w+)\]\s*(.*)", re.DOTALL)
 
-REMEMBER_RE = re.compile(r"\[REMEMBER:\s*(.*?)\]", re.IGNORECASE)
-FORGET_RE = re.compile(r"\[FORGET:\s*(.*?)\]", re.IGNORECASE)
+# Memory only triggers on these literal keywords in HER message - never inferred by the LLM.
+REMEMBER_TRIGGER_RE = re.compile(r"\bremember\b", re.IGNORECASE)
+FORGET_TRIGGER_RE = re.compile(r"\bforget\b", re.IGNORECASE)
+
+EXTRACTION_PROMPT = """Extract only the core fact to memorize from the sentence below.
+Output ONLY the fact as a short third-person statement. No brackets, no labels, no extra words.
+
+Input: "I want you to remember that I like apples."
+Output: She likes apples.
+
+Input: "Please remember my birthday is June 3rd."
+Output: Her birthday is June 3rd.
+
+Input: "{sentence}"
+Output:"""
 
 
-def extract_memory_commands(text: str):
-    remembers = REMEMBER_RE.findall(text)
-    forgets = FORGET_RE.findall(text)
-    clean_text = REMEMBER_RE.sub("", text)
-    clean_text = FORGET_RE.sub("", clean_text).strip()
-    return clean_text, remembers, forgets
+def extract_fact_to_remember(sentence: str) -> str:
+    raw = llm.invoke([HumanMessage(content=EXTRACTION_PROMPT.format(sentence=sentence))])
+    return raw.strip().strip('"')
+
 
 def parse_mood_and_text(raw: str):
     match = MOOD_TAG_RE.match(raw)
@@ -159,6 +208,7 @@ def parse_mood_and_text(raw: str):
     # Model didn't follow the format; fall back gracefully.
     return "idle", raw.strip()
 
+
 def sanitize_reply(text: str) -> str:
     # cut at the first paragraph break — Rocky's lines are one short paragraph
     text = text.split("\n\n")[0]
@@ -169,9 +219,68 @@ def sanitize_reply(text: str) -> str:
     lines = [ln for ln in text.split("\n") if not any(m in ln.lower() for m in leak_markers)]
     return " ".join(lines).strip()
 
+
+# ============================================================
+# VISION (Moondream via Ollama's REST API)
+# ============================================================
+JUNK_RESPONSE_RE = re.compile(r'^[\W_]+$')  # symbols/punctuation only, no letters
+
+def is_junk_response(text: str) -> bool:
+    """Flags likely hallucinated noise: pure punctuation, or a single bare word
+    with no real descriptive structure (e.g. '!!!' or 'iphone' out of nowhere)."""
+    if not text:
+        return True
+    if JUNK_RESPONSE_RE.match(text):
+        return True
+    word_count = len(text.split())
+    if word_count <= 2 and len(text) < 20:
+        return True
+    return False
+
+
+async def ask_moondream(image_b64: str, question: str) -> str:
+    async with httpx.AsyncClient(timeout=90) as client:
+        last_text = ""
+        for attempt in range(3):
+            resp = await client.post(OLLAMA_GENERATE_URL, json={
+                "model": VISION_MODEL,
+                "prompt": question,
+                "images": [image_b64],
+                "stream": False,
+                "options": {
+                    "temperature": 0.2,
+                    "top_p": 0.9,
+                    "repeat_penalty": 1.1,
+                    "num_predict": 200,
+                },
+            })
+            resp.raise_for_status()
+            payload = resp.json()
+
+            if "error" in payload:
+                print(f"[vision error] {payload['error']}")
+                return ""
+
+            text = payload.get("response", "").strip()
+            last_text = text
+
+            if text and not is_junk_response(text):
+                return text
+
+            print(f"[vision] junk/empty response on attempt {attempt + 1}: {text!r}")
+
+        # all attempts came back junk - tell Rocky honestly rather than pass along noise
+        print(f"[vision] giving up after 3 attempts, last result: {last_text!r}")
+        return "UNCLEAR"
+
+# ============================================================
+# CHAT
+# ============================================================
 class ChatRequest(BaseModel):
     user_id: str
     message: str
+    screen_image_b64: str | None = None
+    webcam_image_b64: str | None = None
 
 
 class ChatResponse(BaseModel):
@@ -183,33 +292,81 @@ class ChatResponse(BaseModel):
 async def chat_with_rocky(request: ChatRequest):
     print(f"\nrocky heard: {request.message}")
     try:
-        # ---- Retrieve all facts ----
+        # ---- Long-term memory facts ----
         facts = load_facts()
-        context = "\n[Things you remember about her]: " + " | ".join(facts) if facts else ""
+        memory_context = "\n[Things you remember about her]: " + " | ".join(facts) if facts else ""
 
-        full_system_prompt = ROCKY_SYSTEM_PROMPT + context
+        # ---- Vision (only present if the client sent images this turn) ----
+        SCREEN_CAPTION_PROMPT = (
+            "Describe everything visible on this screen in detail: any text, "
+            "images, colors, layout, and what website or app is open."
+        )
+        CAMERA_CAPTION_PROMPT = (
+            "Describe the person or people in detail: their clothing and its colors, "
+            "any accessories, hats, glasses, or objects they are holding or wearing, "
+            "their pose, and their surroundings."
+        )
 
-        messages = [
-            SystemMessage(content=full_system_prompt),
-            HumanMessage(content=request.message),
+        vision_context = ""
+        if request.screen_image_b64 or request.webcam_image_b64:
+            descriptions = []
+            if request.screen_image_b64:
+                desc = await ask_moondream(request.screen_image_b64, SCREEN_CAPTION_PROMPT)
+                print(f"[vision - screen] {desc}")
+                if desc == "UNCLEAR":
+                    descriptions.append("Your sonar could not get a clear reading of her screen - tell her honestly you cannot quite make it out, do not guess.")
+                else:
+                    descriptions.append(f"What you observe on her screen: {desc}")
+            if request.webcam_image_b64:
+                desc = await ask_moondream(request.webcam_image_b64, CAMERA_CAPTION_PROMPT)
+                print(f"[vision - camera] {desc}")
+                if desc == "UNCLEAR":
+                    descriptions.append("Your sonar could not get a clear reading through the camera - tell her honestly you cannot quite make it out, do not guess.")
+                else:
+                    descriptions.append(f"What you observe through the camera: {desc}")
+            vision_context = "\n[Visual observations]: " + " | ".join(descriptions)
+
+        full_system_prompt = ROCKY_SYSTEM_PROMPT + memory_context + vision_context
+
+        human_content = request.message
+        human_content = request.message
+        if vision_context:
+            human_content = (
+                f"(Use these observations to directly answer her question below "
+                f"— state the specific color/object/detail FIRST, before any other reaction. Keep your answer direct and brief.): "
+                f"{vision_context}\n\n"
+                f"Her question: {request.message}"
+            )
+
+        history = get_history(request.user_id)
+        messages = [SystemMessage(content=full_system_prompt)] + history + [
+            HumanMessage(content=human_content)
         ]
 
-        raw = llm.invoke(messages)
+        active_llm = llm_heavy if (request.screen_image_b64 or request.webcam_image_b64) else llm
+        raw = active_llm.invoke(messages)
         mood, text = parse_mood_and_text(raw)
-        text, remembers, forgets = extract_memory_commands(text)
         text = sanitize_reply(text)
 
-        # Process memory commands
-        for f in remembers:
-            add_fact(f.strip())
-        for f in forgets:
-            remove_fact(f.strip())
+        # ---- Memory: only fires on literal keyword match in HER message ----
+        if REMEMBER_TRIGGER_RE.search(request.message):
+            fact = extract_fact_to_remember(request.message)
+            if fact:
+                add_fact(fact)
+        if FORGET_TRIGGER_RE.search(request.message):
+            fact = extract_fact_to_remember(request.message)
+            if fact:
+                remove_fact(fact)
+
+        # ---- Update short-term conversation history ----
+        append_to_history(request.user_id, request.message, text)
 
         print(f"rocky says: [{mood}] {text}")
-
         return ChatResponse(response=text, mood=mood)
 
     except Exception as e:
+        import traceback
+        traceback.print_exc()
         raise HTTPException(status_code=500, detail=str(e))
 
 
@@ -220,7 +377,7 @@ class RememberRequest(BaseModel):
 
 @app.post("/remember")
 async def remember_fact(request: RememberRequest):
-    """Directly inject a fact into memory."""
+    """Directly inject a fact into memory, bypassing the keyword trigger."""
     try:
         add_fact(request.fact)
         return {"status": "stored"}
@@ -229,11 +386,12 @@ async def remember_fact(request: RememberRequest):
 
 
 # ============================================================
-# TEXT TO SPEECH (Piper + light "alien" audio processing)
+# TEXT TO SPEECH (Piper + "alien" audio processing)
 # ============================================================
 def synthesize_piper(text: str, out_wav: Path):
     with wave.open(str(out_wav), "wb") as wav_file:
         piper_voice.synthesize_wav(text, wav_file)
+
 
 def alienify(
     input_wav: Path,
@@ -241,45 +399,37 @@ def alienify(
     pitch_semitones: float = 0.2,
     speed_factor: float = 1.32,
     reverb_amount: float = 0,
-    alien_strength: float = 0
+    alien_strength: float = 0,
 ):
-    """
-    Enhanced Rocky-style alien processing.
-    Combines pitch shift, tempo change, light reverb, and subtle distortion.
-    """
-
+    """Rocky-style processing: pitch shift, tempo change, light reverb, subtle distortion."""
     audio = AudioSegment.from_wav(str(input_wav))
 
-    # 1. Pitch shift (deeper, more alien)
+    # 1. Pitch shift
     new_rate = int(audio.frame_rate * (2 ** (pitch_semitones / 12.0)))
     shifted = audio._spawn(audio.raw_data, overrides={"frame_rate": new_rate})
     shifted = shifted.set_frame_rate(audio.frame_rate)
 
-    # 2. Slight slowdown for gravitas (Rocky speaks deliberately)
+    # 2. Tempo adjustment
     if speed_factor != 1.0:
         shifted = speedup(shifted, playback_speed=speed_factor)
 
-    # 3. Light reverb / echo for spacey, melodic quality
+    # 3. Light reverb / echo
     if reverb_amount > 0:
-        # Simple echo simulation
         echo = shifted.low_pass_filter(3000).overlay(
             shifted.low_pass_filter(1800).apply_gain(-12),
-            position=80
+            position=80,
         )
         shifted = shifted.overlay(echo.fade_in(50).fade_out(100), gain_during_overlay=reverb_amount * -6)
 
-    # 4. Normalize + subtle distortion for "synthetic" texture
+    # 4. Normalize + optional bitcrush
     processed = normalize(shifted)
 
-    # Optional light bit-crush / distortion for robotic/alien edge
     if alien_strength > 1.0:
-        # Reduce bit depth for a bitcrushed feel
         samples = processed.get_array_of_samples()
-        # Simple quantization (crude but effective)
         bit_depth = max(8, int(16 / alien_strength))
         processed = processed._spawn(
             [int(s / (1 << (16 - bit_depth))) * (1 << (16 - bit_depth)) for s in samples],
-            overrides={"sample_width": 2}
+            overrides={"sample_width": 2},
         )
 
     processed.export(str(output_wav), format="wav")
@@ -302,6 +452,8 @@ async def speak(request: SpeakRequest):
         return FileResponse(final_path, media_type="audio/wav", filename="rocky.wav")
 
     except Exception as e:
+        import traceback
+        traceback.print_exc()
         raise HTTPException(status_code=500, detail=str(e))
 
 
@@ -315,8 +467,6 @@ def get_whisper_model():
     global _whisper_model
     if _whisper_model is None:
         from faster_whisper import WhisperModel
-        # "cpu" + int8 works everywhere; on Apple Silicon this is plenty fast
-        # for short clips. Swap device to "auto" if you install a GPU build.
         _whisper_model = WhisperModel(WHISPER_MODEL_SIZE, device="cpu", compute_type="int8")
     return _whisper_model
 
@@ -336,13 +486,29 @@ async def listen(audio: UploadFile = File(...)):
         return {"text": text}
 
     except Exception as e:
+        import traceback
+        traceback.print_exc()
         raise HTTPException(status_code=500, detail=str(e))
 
 
 @app.get("/health")
 async def health():
-    return {"status": "ok", "model": LLM_MODEL}
+    return {"status": "ok", "model": LLM_MODEL, "vision_model": VISION_MODEL}
 
+THINKING_AUDIO_PATH = AUDIO_TMP_DIR / "thinking_cached.wav"
+
+def pregenerate_thinking_audio():
+    if not THINKING_AUDIO_PATH.exists():
+        raw_path = AUDIO_TMP_DIR / "thinking_raw.wav"
+        synthesize_piper("Rocky thinking.", raw_path)
+        alienify(raw_path, THINKING_AUDIO_PATH)
+        raw_path.unlink(missing_ok=True)
+
+pregenerate_thinking_audio()  # call this once, right after piper_voice is loaded
+
+@app.get("/thinking-sound")
+async def thinking_sound():
+    return FileResponse(THINKING_AUDIO_PATH, media_type="audio/wav")
 
 if __name__ == "__main__":
     import uvicorn

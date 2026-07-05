@@ -10,3 +10,4 @@ pydub
 piper-tts
 python-multipart
 sentence-transformers
+httpx
