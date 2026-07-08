@@ -1,137 +1,71 @@
 # Rocky Desktop Buddy
 
-A local, free, offline desktop companion inspired by Rocky from *Project Hail Mary*.
-Talks to your girlfriend by voice, remembers facts about her over time, and shows
-expressive pixel-art sprites while it "talks."
+Amaze! Amaze! Amaze!
+fav_rocky is a free, local, offline desktop companion inspired by Rocky from *Project Hail Mary*.  It talks to you by voice, can remember facts, and can access your screen and camera (if allowed, and only when prompted).  Works on Windows & Mac.
 
-Everything runs **locally on her Mac** — no API keys, no per-message costs, no
-internet dependency once set up (aside from the one-time downloads below).
+Everything is local, so completely zero cost.  This comes at the tradeoff of time - it typically takes 10s for a regular reply, and 30s for an thinking one (e.g. if you request a task with the camera/screen).  Rocky will tell you "rocky thinking" if the reply will take some time.
+
+Rocky does his best to infer, but if you want him to see your screen or camera, use the word "screen" or "camera" respectively to ensure he uses it.
 
 ```
-rocky-project/
-├── Rocky.app         <- Double-click this to start Rocky (after one-time setup)
-├── .gitignore        <- For git
-├── start_rocky.sh    <- What Rocky.app runs under the hood
-├── server/           <- Python "brain": LLM + memory + STT + TTS
-│   ├── server.py
+FAV_ROCKY/
+├── electron/                <- Desktop pet UI & main container
+│   ├── node_modules/
+│   ├── sprites/             <- Pixel art (feel free to make your own sprites!)
+│   ├── index.html
+│   ├── main.js
+│   ├── package-lock.json
+│   ├── package.json
+│   ├── preload.js
+│   ├── renderer.js
+│   ├── rocky.ico
+├── Rocky.app                     
+├── server/                  <- Python "brain": LLM + memory + STT + TTS
+│   ├── preload/
+│   ├── venv/
+│   ├── voices/
 │   ├── requirements.txt
-│   └── setup_mac.sh
-└── electron/         <- Desktop pet UI
-    ├── main.js
-    ├── preload.js
-    ├── index.html
-    ├── renderer.js
-    ├── package.json
-    └── sprites/      <- placeholder art, swap for real Rocky pixel art
+│   ├── rocky_facts.json     <- Local JSON memory for Rocky (JSON used over embeddings for easy editing)
+│   ├── server.py
+│   ├── setup_mac.sh
+│   └── setup_windows.ps1
+├── .gitignore                        
+├── README.md                <- Documentation / instructions
+├── Start Rocky.vbs          <- Click this to start Rocky!
+├── start_rocky_windows.ps1           
+└── start_rocky.sh                    
 ```
-
-## What's already working here
-- `/chat` — sends her message through the Rocky personality prompt, includes
-  any remembered facts about her as context, returns a reply **and a mood
-  tag** (happy/excited/curious/sad/worried/angry/idle) so the sprite can
-  react.
-- `/listen` — turns a recorded voice clip into text using faster-whisper
-  (fully offline).
-- `/speak` — turns Rocky's reply into speech using Piper TTS, then applies a
-  pitch-shift pass for a heavier, alien-ish tone.
-- `/remember` — lets you manually seed facts into memory if you want to give
-  Rocky a head start (e.g. her name, favorite things) before first launch.
-- Electron shell — transparent, draggable, always-on-top window that shows a
-  sprite, listens for clicks, records her voice, and plays Rocky's response.
-
-## What you still need to supply
-1. **Real pixel art for Rocky.** I generated placeholder colored blobs in
-   `electron/sprites/` just so the app runs out of the box — replace those
-   PNG files (same filenames) with actual pixel art you create or commission.
-   I can't generate Rocky's likeness myself since he's a copyrighted character
-   from the book/movie, but a personal fan-art sprite you draw or have drawn
-   is exactly the kind of thing this app is built to display.
-2. One-time model downloads (handled by `setup_mac.sh`, see below).
 
 ---
 
-## Setup on her Mac
+## Setup
 
-### One-time setup
-```bash
-cd server
-chmod +x setup_mac.sh
-./setup_mac.sh
-```
-This installs Homebrew (if missing), Ollama, ffmpeg, and Node.js; pulls all
-the local models `server.py` uses (`gemma2:2b`, `phi3:mini`, `moondream`,
-plus `llama3.1:8b-instruct-q4_K_M` as an optional heavier backup); sets up
-the Python virtual environment and dependencies; downloads both Piper voice
-models (`en_US-joe-medium`, the default, and `en_US-ryan-high` as an
-alternative); installs the Electron app's dependencies; and copies
-**Rocky.app** to the Desktop.
+Fist my bump!  Setup is simple:
 
-This step downloads several GB of models, so it can take a while — that's
-normal.
+### Initial (one-time) setup
+[insert setup instructions here]
 
-### Every time after that
-Just double-click **Rocky.app** on the Desktop. A Terminal window will open
-showing status while Rocky wakes up (Ollama → brain server → the desktop
-widget) — that's expected, just leave it be. Once Rocky appears, click him
-to start recording, click again to stop and send.
+### Launch Rocky
+Just double-click **Rocky.app**, and Rocky will load up in ~15 seconds!  There's a terminal to provide some visibility, but you can close it if desired.
+To quit, just close the electron app (icon of Rocky).
 
-To quit Rocky, use the tray icon near the clock in the menu bar and choose
-"Quit Rocky." This also shuts down the brain server running behind him, so
-you won't end up with an orphaned process eating RAM.
+---
 
-If you ever want to run things manually instead (e.g. to see the Python
-server's logs directly), you can still do:
+## If you want to edit
+
+- If replies feel very slow, try `phi3:mini` or `gemma2:2b` in `LLM_MODEL` inside `server.py`, or replace with your model of choice.
+- `alienify()` in `server.py` is a pretty crude pitch shift, but does a decent job.
+- The LLM is instructed to prefix every reply with `[mood]`. If you swap models and moods stop showing up reliably, check the raw output from `/chat` in the terminal logs — some smaller models need a stricter prompt or a one-shot example to follow formatting instructions.
+- For manual start:
 ```bash
 cd server && source venv/bin/activate && python server.py
 # in another terminal:
 cd electron && npm start
 ```
 
----
-
-## Building an installable app (from your Windows machine)
-
-You don't need a Mac to build this — GitHub Actions can build the actual
-macOS app for you for free. Rough steps:
-
-1. Push this whole `rocky-project` folder to a GitHub repo (private is fine).
-2. Add a workflow file at `.github/workflows/build-mac.yml` that runs on
-   `macos-latest`, does `npm install` and `npm run build:mac` inside
-   `electron/`, and uploads the resulting `.zip`/`.app` as a build artifact.
-3. Download the artifact and send it to her (or have her download it
-   directly from the Actions run).
-
-I can write that workflow file for you next — just say the word once you've
-got this running locally and want to package it up.
-
-She'll still need the Python brain server + Ollama installed separately
-(the `setup_mac.sh` script handles that in one shot) since bundling a full
-LLM runtime into the Electron app itself is a heavier lift than it's worth
-for a personal project like this.
-
----
-
-## Tuning notes
-
-- **Speed**: if replies still feel slow on her machine, try `phi3:mini` or
-  `gemma2:2b` in `LLM_MODEL` inside `server.py` — much faster, still plenty
-  capable for Rocky's short (5-20 word) lines.
-- **Voice character**: `alienify()` in `server.py` currently just pitch-shifts
-  and normalizes. If you want more of a "made of rock" texture, look into
-  adding light ring modulation or bitcrushing — happy to add that next.
-- **Memory**: facts get stored in `server/rocky_facts.json`, a plain list of
-  short sentences. Delete that file any time to wipe Rocky's memory and
-  start fresh. Use `/remember` to seed specific facts ahead of time.
-- **Mood tags**: the LLM is instructed to prefix every reply with
-  `[mood]`. If you swap models and moods stop showing up reliably, check the
-  raw output from `/chat` in the terminal logs — some smaller models need a
-  stricter prompt or a one-shot example to follow formatting instructions.
-
----
-
-## Next steps (Phase 7 - screen vision)
-
-Once the above is running smoothly, the next addition is a `/see` endpoint
-using a local vision model (`ollama pull moondream` or `llava`), fed a
-screenshot from Electron's `desktopCapturer` API plus her spoken question.
-Say the word when you're ready and I'll wire that in too.
+## Commands
+- `/chat` — sends a message through the Rocky personality prompt, includes any remembered facts as context, returns a reply **and a mood tag** (happy/excited/curious/sad/worried/angry/idle) so the sprite can react.
+- `/listen` — turns a recorded voice clip into text using faster-whisper (fully offline).
+- `/speak` — turns Rocky's reply into speech using Piper TTS, then applies a pitch-shift pass for a heavier, rocky-ish tone.
+- `/remember` — lets you manually seed facts into memory.
+- Electron shell — transparent, draggable, always-on-top window that shows a sprite, listens for clicks, records voice, and plays Rocky's response.
